@@ -20,6 +20,8 @@
 #include <pcl_ros/transforms.h>
 #include <boost/lexical_cast.hpp>
 #include <sensor_msgs/PointCloud2.h>
+#include <ar_track_alvar_msgs/AlvarMarker.h>
+#include <ar_track_alvar_msgs/AlvarMarkers.h>
 
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
@@ -34,6 +36,7 @@
 std::vector<ros::Publisher> g_pub_vec;
 ros::Publisher g_pub_cyl_cloud;
 ros::Publisher  g_pub_cyl_markers;
+ros::Publisher  g_pub_pose_markers;
 std::vector<std::pair<Eigen::Vector4f, int> > g_last_centroids;
 
 void 
@@ -232,6 +235,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     std::vector<Eigen::Vector4f> centroids;
     std::vector<std::pair<Eigen::Vector4f, int> > current_centroid_ids;
     visualization_msgs::MarkerArray ma;
+    ar_track_alvar_msgs::AlvarMarkers pose_markers;
 
     for (int i = 0; i < cloud_clusters.size(); ++i) {
         ///@{   Cylinder fitting
@@ -392,15 +396,26 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
       ROS_INFO("    id: %d", g_last_centroids[i].second);
     }
 
-    // getchar();
-
     g_pub_cyl_markers.publish(ma);
+    ///@}
+
+    ///@{   Alvar pose markers
+    for (int i = 0; i < current_centroid_ids.size(); ++i) {
+        ar_track_alvar_msgs::AlvarMarker pose_marker;
+        pose_marker.id = current_centroid_ids[i].second;
+        pose_marker.pose.pose.position.x = current_centroid_ids[i].first[0];
+        pose_marker.pose.pose.position.y = current_centroid_ids[i].first[1];
+        pose_marker.pose.pose.position.z = current_centroid_ids[i].first[2];
+        pose_markers.markers.push_back(pose_marker);
+    }
+    g_pub_pose_markers.publish(pose_markers);
     ///@}
   
     ros::Time end = ros::Time::now();
     ros::Duration d = end - begin;
   
     ROS_INFO("Cycle time %f", d.toSec());
+    // getchar();
     return;
 }
 int
@@ -412,6 +427,7 @@ main (int argc, char** argv)
     g_pub_cyl_cloud = nh.advertise<sensor_msgs::PointCloud2> ("cyl_cloud", 100);
     g_pub_cyl_markers = nh.advertise<visualization_msgs::MarkerArray>(
             "visualization_markers", 100);
+    g_pub_pose_markers = nh.advertise<ar_track_alvar_msgs::AlvarMarkers> ("ar_pose_marker", 100);
     // Initialize ROS
 
     // Create a ROS subscriber for the input point cloud

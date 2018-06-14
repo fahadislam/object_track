@@ -103,11 +103,11 @@ find_package(catkin REQUIRED COMPONENTS
 ## LIBRARIES: libraries you create in this project that dependent projects also need
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
+
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES object_track
-#  CATKIN_DEPENDS pcl_conversions pcl_ros roscpp sensor_msgs
-#  DEPENDS system_lib
+  #INCLUDE_DIRS include
+  #LIBRARIES object_track
+  CATKIN_DEPENDS ar_track_alvar_msgs
 )
 
 ###########
@@ -199,5 +199,5 @@ include_directories(
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
 
-add_executable(example src/tracker.cpp)
-target_link_libraries(example ${catkin_LIBRARIES})
+add_executable(tracker src/tracker.cpp)
+target_link_libraries(tracker ${catkin_LIBRARIES})
