@@ -326,7 +326,8 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
         if (cloud_cylinder->points.empty ()) {
           std::cerr << "Can't find the cylindrical component." << std::endl;
-          continue;
+          *cloud_cylinder = *cloud_filtered2;
+          // continue;
         }
         else
         {
@@ -349,6 +350,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
         centroids.push_back(centroid);
       
         ROS_INFO("Centroid x: %f  y: %f  z: %f\n", centroid[0], centroid[1], centroid[2]);
+        ///@}
     
         ///@{   Cylinder ids
         double min_dist = 1000000;
@@ -374,7 +376,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
             // }
             // centroid_id = max_id + 1;
             // centroid_id = g_last_centroids.size();
-            centroid_id = g_next_id;
+            centroid_id = g_next_id % 10;;
             g_last_centroids.push_back(std::pair<Eigen::Vector4f, int> (centroid, centroid_id));
             ROS_INFO("Created new id: %d", centroid_id);
             g_next_id++;
@@ -454,7 +456,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
   
     ROS_INFO("Cycle time %f", d.toSec());
     printf("--------------------------------------------------------------\n\n");
-    getchar();
+    // getchar();
     return;
 }
 int
