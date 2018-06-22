@@ -38,25 +38,22 @@ ros::Publisher g_pub_cyl_cloud;
 ros::Publisher  g_pub_cyl_markers;
 ros::Publisher  g_pub_pose_markers;
 std::vector<std::pair<Eigen::Vector4f, int> > g_last_centroids;
+tf::StampedTransform g_transform;
+bool g_has_transform = false;
+int g_next_id = 0;
+
+tf::Transform get_tf_from_stamped_tf(tf::StampedTransform sTf) {
+   tf::Transform tf(sTf.getBasis(),sTf.getOrigin()); //construct a transform using elements of sTf
+   return tf;
+}
 
 void 
 cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 {
     ros::Time begin = ros::Time::now();
-
-    ///@{    Transform cloud (Identity for now)
-    sensor_msgs::PointCloud2 transformed_cloud;
-    tf::TransformListener listener;
-
-    while (true) {
-        if (!pcl_ros::transformPointCloud(input->header.frame_id, *input, transformed_cloud, listener)) {
-            ros::Duration(0.1).sleep();
-        }
-        else {
-          break;
-        }
-    }
-    //@}
+    ros::Duration d;
+    if (!ros::ok())
+    	return;
 
     ///@{    Downsample
     pcl::PointCloud<pcl::PointXYZ>::Ptr downsampled_XYZ  (new pcl::PointCloud<pcl::PointXYZ>);
@@ -72,8 +69,8 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     // std::cerr << "PointCloud before filtering: " << cloud->width * cloud->height
     //         << " data points." << std::endl;
     // Convert to PCL data type
-    pcl_conversions::toPCL(transformed_cloud, *cloud);
-  
+    pcl_conversions::toPCL(*input, *cloud);
+
     // Perform the actual filtering
     pcl::VoxelGrid<pcl::PCLPointCloud2> sor;
 
@@ -84,18 +81,36 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     pcl::fromPCLPointCloud2(cloud_filtered, *downsampled_XYZ);
 
     std::cerr << "PointCloud after filtering: " << downsampled_XYZ->width * downsampled_XYZ->height << " data points." << std::endl;
+    d = ros::Time::now() - begin;
+    ROS_INFO("downsampling at: %f", d.toSec());
     ///@}
 
+    ///@{    Transform cloud
+    pcl::PointCloud<pcl::PointXYZ> transformed_cloud;
+
+    if (!g_has_transform) {
+        tf::TransformListener listener;
+        listener.waitForTransform("base_footprint", input->header.frame_id,
+                                  ros::Time(0), ros::Duration(10.0));
+        listener.lookupTransform( "base_footprint", input->header.frame_id, ros::Time(0), g_transform);
+        g_has_transform = true;
+    }
+
+    pcl_ros::transformPointCloud(*downsampled_XYZ, transformed_cloud, get_tf_from_stamped_tf(g_transform));
+    *downsampled_XYZ  = transformed_cloud;
+    d = ros::Time::now() - begin;
+    ROS_INFO("transformation at: %f", d.toSec());
+    //@}
 
     ///@{   Crop region of interest
     Eigen::Vector4f minPoint; 
-    minPoint[0]=0;  // define minimum point x 
-    minPoint[1]=0;  // define minimum point y 
-    minPoint[2]=0;  // define minimum point z 
+    minPoint[0]=0.3;  // define minimum point x 
+    minPoint[1]=1.2;  // define minimum point y 
+    minPoint[2]=0.66;  // define minimum point z 
     Eigen::Vector4f maxPoint; 
-    maxPoint[0]=7;  // define max point x 
-    maxPoint[1]=7;  // define max point y 
-    maxPoint[2]=7;  // define max point z
+    maxPoint[0]=0.5;  // define max point x 
+    maxPoint[1]=1.7;  // define max point y 
+    maxPoint[2]=1.0;  // define max point z
 // Define translation and rotation ( this is optional) 
 
     Eigen::Vector3f boxTranslatation; 
@@ -109,16 +124,9 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     boxRotation[0]=0;  // rotation around x-axis 
     boxRotation[1]=0;  // rotation around y-axis 
     boxRotation[2]=0.0;  //in radians rotation around z-axis. this rotates your cube 45deg around z-axis. 
-
     // OR:
     // cropFilter.setTransform(boxTransform);
     
-    // OR:
-  // pass.setInputCloud (cloud);
-  // pass.setFilterFieldName ("z");
-  // pass.setFilterLimits (0, 2.8);
-  // pass.filter (*cloud_filtered);
-  // std::cerr << "PointCloud after filtering has: " << cloud_filtered->points.size () << " data points." << std::endl;
 
     pcl::CropBox<pcl::PointXYZ> cropFilter; 
     cropFilter.setInputCloud (downsampled_XYZ); 
@@ -127,8 +135,12 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     // cropFilter.setTranslation(boxTranslatation); 
     // cropFilter.setRotation(boxRotation); 
 
-    cropFilter.filter (*downsampled_XYZ); 
+    cropFilter.filter (*downsampled_XYZ);
+    d = ros::Time::now() - begin;
+    ROS_INFO("cropping at: %f", d.toSec());
     ///@}
+
+
 
     ///@{   Clustering
     //Create the SACSegmentation object and set the model and method type
@@ -151,6 +163,8 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     // While 30% of the original cloud is still there
     while (downsampled_XYZ->points.size () > 0.3 * nr_points)
     {
+    	if (!ros::ok())
+    		break;
         // Segment the largest planar component from the remaining cloud
         seg.setInputCloud (downsampled_XYZ);
         seg.segment (*inliers, *coefficients);
@@ -222,15 +236,16 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
         //Convert the pointcloud to be used in ROS
         sensor_msgs::PointCloud2::Ptr output (new sensor_msgs::PointCloud2);
         pcl::toROSMsg (*cloud_cluster, *output);
-        output->header.frame_id = input->header.frame_id;
+        output->header.frame_id = "base_footprint";
 
         // Publish the data
         g_pub_vec[j].publish (output);
         ++j;
     }
-    ///@}
-
+    d = ros::Time::now() - begin;
+    ROS_INFO("clustering at: %f", d.toSec());
     ROS_INFO("Num of clusters: %zu", cloud_clusters.size());
+    ///@}
 
     std::vector<Eigen::Vector4f> centroids;
     std::vector<std::pair<Eigen::Vector4f, int> > current_centroid_ids;
@@ -328,6 +343,9 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
         ///@{   Centroids
         Eigen::Vector4f centroid;
         pcl::compute3DCentroid(*cloud_cylinder, centroid);
+
+        // override
+        centroid[2] = 0.75;
         centroids.push_back(centroid);
       
         ROS_INFO("Centroid x: %f  y: %f  z: %f\n", centroid[0], centroid[1], centroid[2]);
@@ -339,7 +357,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
         for (size_t cdx = 0; cdx < g_last_centroids.size(); ++cdx) {
             Eigen::Vector4f c = g_last_centroids[cdx].first;
-            double dist = sqrt(pow(c[0] - centroid[0], 2) + pow(c[0] - centroid[0], 2) + pow(c[0] - centroid[0], 2));
+            double dist = sqrt(pow(c[0] - centroid[0], 2) + pow(c[1] - centroid[1], 2) + pow(c[2] - centroid[2], 2));
             if (dist < min_dist) {
                 min_dist = dist;
                 centroid_id = g_last_centroids[cdx].second;
@@ -347,8 +365,22 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
         }
         ROS_INFO("dist: %f", min_dist);
         if (min_dist > thresh) {
-            centroid_id = g_last_centroids.size();
+            //find max id
+            // int max_id = 0;
+            // for (size_t i = 0; i < g_last_centroids.size(); ++i) {
+            //     if (g_last_centroids[i].second > max_id) {
+            //         max_id = g_last_centroids[i].second;
+            //     }
+            // }
+            // centroid_id = max_id + 1;
+            // centroid_id = g_last_centroids.size();
+            centroid_id = g_next_id;
             g_last_centroids.push_back(std::pair<Eigen::Vector4f, int> (centroid, centroid_id));
+            ROS_INFO("Created new id: %d", centroid_id);
+            g_next_id++;
+        }
+        else {
+            ROS_INFO("Matched old id: %d", centroid_id);
         }
 
         current_centroid_ids.push_back(std::pair<Eigen::Vector4f, int> (centroid, centroid_id));
@@ -356,7 +388,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
 
         visualization_msgs::Marker marker;
         marker.header.stamp = ros::Time::now();
-        marker.header.frame_id = "camera_depth_optical_frame";
+        marker.header.frame_id = "base_footprint";
         marker.ns = "cylinder";
         marker.id = i;
         marker.type = visualization_msgs::Marker::CYLINDER;
@@ -367,7 +399,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
         marker.pose.orientation.w = 1.0;
         marker.scale.x = 0.05;
         marker.scale.y = 0.05;
-        marker.scale.z = 0.1;
+        marker.scale.z = 0.15;
         if (centroid_id == 1) {
             marker.color.r = 1.0f;
             marker.color.g = 0.0f;
@@ -384,14 +416,14 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
             marker.color.b = 0.0f;          
         } 
         marker.color.a = 1.0f;
-        marker.lifetime = ros::Duration(0);
+        marker.lifetime = ros::Duration(0.2);
         ma.markers.push_back(marker);
     }
 
     // update centroids
     g_last_centroids = current_centroid_ids;
 
-    ROS_INFO("\n %zu CENTROID IDS: ", g_last_centroids.size());
+    ROS_INFO("\n %zu Cylinder: ", g_last_centroids.size());
     for (int i = 0; i < g_last_centroids.size(); ++i) {
       ROS_INFO("    id: %d", g_last_centroids[i].second);
     }
@@ -403,19 +435,26 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     for (int i = 0; i < current_centroid_ids.size(); ++i) {
         ar_track_alvar_msgs::AlvarMarker pose_marker;
         pose_marker.id = current_centroid_ids[i].second;
+        pose_marker.pose.header.stamp = input->header.stamp;
+        pose_marker.pose.header.frame_id = "base_footprint";
         pose_marker.pose.pose.position.x = current_centroid_ids[i].first[0];
         pose_marker.pose.pose.position.y = current_centroid_ids[i].first[1];
         pose_marker.pose.pose.position.z = current_centroid_ids[i].first[2];
+        pose_marker.pose.pose.orientation.w = 1.0;
+        pose_marker.header.stamp = input->header.stamp;
+        pose_marker.header.frame_id = "base_footprint";
         pose_markers.markers.push_back(pose_marker);
     }
+    pose_markers.header.stamp = input->header.stamp;
+    pose_markers.header.frame_id = "base_footprint";
     g_pub_pose_markers.publish(pose_markers);
     ///@}
   
-    ros::Time end = ros::Time::now();
-    ros::Duration d = end - begin;
+    d = ros::Time::now() - begin;
   
     ROS_INFO("Cycle time %f", d.toSec());
-    // getchar();
+    printf("--------------------------------------------------------------\n\n");
+    getchar();
     return;
 }
 int
