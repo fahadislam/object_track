@@ -108,7 +108,7 @@ cloud_cb (const sensor_msgs::PointCloud2ConstPtr& input)
     minPoint[1]=1.2;  // define minimum point y 
     minPoint[2]=0.66;  // define minimum point z 
     Eigen::Vector4f maxPoint; 
-    maxPoint[0]=0.5;  // define max point x 
+    maxPoint[0]=0.61;  // define max point x 
     maxPoint[1]=1.7;  // define max point y 
     maxPoint[2]=1.0;  // define max point z
 // Define translation and rotation ( this is optional) 
